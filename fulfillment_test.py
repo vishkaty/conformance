@@ -17,14 +17,14 @@
 import uuid
 from absl.testing import absltest
 import integration_test_utils
-from ucp_sdk.models.schemas.shopping import fulfillment_resp as checkout
-from ucp_sdk.models.schemas.shopping.payment_resp import (
-  PaymentResponse as Payment,
+from ucp_sdk.models.schemas.shopping import checkout as checkout
+from ucp_sdk.models.schemas.shopping.payment import (
+  Payment,
 )
 from ucp_sdk.models.schemas.shopping.types import postal_address
 
 # Rebuild models to resolve forward references
-checkout.Checkout.model_rebuild(_types_namespace={"PaymentResponse": Payment})
+checkout.Checkout.model_rebuild(_types_namespace={"Payment": Payment})
 
 
 class FulfillmentTest(integration_test_utils.IntegrationTestBase):
@@ -68,6 +68,8 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
       "methods": [
         {
           "type": "shipping",
+          "id": "method_1",
+          "line_item_ids": [checkout_obj.line_items[0].id],
           "destinations": [address_data],
           "selected_destination_id": "dest_1",
         }
@@ -80,13 +82,16 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
     checkout_with_options = checkout.Checkout(**response_json)
 
     # Verify options are generated in the nested structure
-    # checkout.fulfillment.root.methods[0].groups[0].options
-    self.assertIsNotNone(checkout_with_options.fulfillment)
-    self.assertNotEmpty(checkout_with_options.fulfillment.root.methods)
-    method = checkout_with_options.fulfillment.root.methods[0]
-    self.assertNotEmpty(method.groups)
-    group = method.groups[0]
-    options = group.options
+    methods = (
+      response_json.get("fulfillment", {})
+      .get("root", response_json.get("fulfillment", {}))
+      .get("methods", [])
+    )
+    self.assertTrue(methods)
+    method = methods[0]
+    self.assertTrue(method.get("groups"))
+    group = method["groups"][0]
+    options = group.get("options", [])
 
     self.assertTrue(
       options,
@@ -94,15 +99,19 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
     )
 
     # 2. Select Option
-    option_id = options[0].id
+    option_id = options[0]["id"]
     option_cost = next(
-      (t.amount for t in options[0].totals if t.type == "total"), 0
+      (t["amount"] for t in options[0]["totals"] if t["type"] == "total"), 0
     )
 
     # Update payload to select the option
     # We must preserve the destination to keep options available
     fulfillment_payload["methods"][0]["groups"] = [
-      {"selected_option_id": option_id}
+      {
+        "id": group.get("id", "group_1"),
+        "line_item_ids": group.get("line_item_ids", []),
+        "selected_option_id": option_id,
+      }
     ]
 
     response_json = self.update_checkout_session(
@@ -149,6 +158,8 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
       "methods": [
         {
           "type": "shipping",
+          "id": "method_1",
+          "line_item_ids": [checkout_obj.line_items[0].id],
           "destinations": [us_address],
           "selected_destination_id": "dest_us",
         }
@@ -161,9 +172,11 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
     us_checkout = checkout.Checkout(**response_json)
 
     # Check for US options
-    options = us_checkout.fulfillment.root.methods[0].groups[0].options
+    options = us_checkout.model_extra["fulfillment"]["methods"][0]["groups"][0][
+      "options"
+    ]
     self.assertTrue(
-      options and any(o.id == "exp-ship-us" for o in options),
+      options and any(o["id"] == "exp-ship-us" for o in options),
       f"Expected US express option, got {options}",
     )
 
@@ -178,6 +191,8 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
       "methods": [
         {
           "type": "shipping",
+          "id": "method_1",
+          "line_item_ids": [checkout_obj.line_items[0].id],
           "destinations": [ca_address],
           "selected_destination_id": "dest_ca",
         }
@@ -190,9 +205,11 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
     ca_checkout = checkout.Checkout(**response_json)
 
     # Check for International options
-    options = ca_checkout.fulfillment.root.methods[0].groups[0].options
+    options = ca_checkout.model_extra["fulfillment"]["methods"][0]["groups"][0][
+      "options"
+    ]
     self.assertTrue(
-      options and any(o.id == "exp-ship-intl" for o in options),
+      options and any(o["id"] == "exp-ship-intl" for o in options),
       f"Expected Intl express option, got {options}",
     )
 
@@ -207,17 +224,26 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
 
     # Trigger fulfillment update (empty payload to trigger sync)
     response_json = self.update_checkout_session(
-      checkout_obj, fulfillment={"methods": [{"type": "shipping"}]}
+      checkout_obj,
+      fulfillment={
+        "methods": [
+          {
+            "id": "method_1",
+            "type": "shipping",
+            "line_item_ids": [checkout_obj.line_items[0].id],
+          }
+        ]
+      },
     )
     updated_checkout = checkout.Checkout(**response_json)
 
     # Verify no destinations injected
-    method = updated_checkout.fulfillment.root.methods[0]
-    self.assertIsNone(method.destinations)
+    method = updated_checkout.model_extra["fulfillment"]["methods"][0]
+    self.assertIsNone(method["destinations"])
 
   def test_known_customer_no_address(self) -> None:
     """Test that a known customer with no stored address gets no injection."""
-    # Jane Doe (cust_3) has no address in CSV
+    # Jane Doe (customer_3) has no address in CSV
     response_json = self.create_checkout_session(
       buyer={"fullName": "Jane Doe", "email": "jane.doe@example.com"},
       select_fulfillment=False,
@@ -225,16 +251,25 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
     checkout_obj = checkout.Checkout(**response_json)
 
     response_json = self.update_checkout_session(
-      checkout_obj, fulfillment={"methods": [{"type": "shipping"}]}
+      checkout_obj,
+      fulfillment={
+        "methods": [
+          {
+            "id": "method_1",
+            "type": "shipping",
+            "line_item_ids": [checkout_obj.line_items[0].id],
+          }
+        ]
+      },
     )
     updated_checkout = checkout.Checkout(**response_json)
 
-    method = updated_checkout.fulfillment.root.methods[0]
-    self.assertIsNone(method.destinations)
+    method = updated_checkout.model_extra["fulfillment"]["methods"][0]
+    self.assertIsNone(method["destinations"])
 
   def test_known_customer_one_address(self) -> None:
     """Test that a known customer with an address gets it injected."""
-    # John Doe (cust_1) has an address
+    # John Doe (customer_1) has an address
     response_json = self.create_checkout_session(
       buyer={"fullName": "John Doe", "email": "john.doe@example.com"},
       select_fulfillment=False,
@@ -242,15 +277,24 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
     checkout_obj = checkout.Checkout(**response_json)
 
     response_json = self.update_checkout_session(
-      checkout_obj, fulfillment={"methods": [{"type": "shipping"}]}
+      checkout_obj,
+      fulfillment={
+        "methods": [
+          {
+            "id": "method_1",
+            "type": "shipping",
+            "line_item_ids": [checkout_obj.line_items[0].id],
+          }
+        ]
+      },
     )
     updated_checkout = checkout.Checkout(**response_json)
 
-    method = updated_checkout.fulfillment.root.methods[0]
-    self.assertIsNotNone(method.destinations)
+    method = updated_checkout.model_extra["fulfillment"]["methods"][0]
+    self.assertIsNotNone(method["destinations"])
     # He has at least 2 addresses
-    self.assertGreaterEqual(len(method.destinations), 2)
-    self.assertEqual(method.destinations[0].root.address_country, "US")
+    self.assertGreaterEqual(len(method["destinations"]), 2)
+    self.assertEqual(method["destinations"][0]["address_country"], "US")
 
   def test_known_customer_multiple_addresses_selection(self) -> None:
     """Test selecting between multiple addresses for a known customer."""
@@ -263,22 +307,37 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
 
     # Trigger injection
     response_json = self.update_checkout_session(
-      checkout_obj, fulfillment={"methods": [{"type": "shipping"}]}
+      checkout_obj,
+      fulfillment={
+        "methods": [
+          {
+            "id": "method_1",
+            "type": "shipping",
+            "line_item_ids": [checkout_obj.line_items[0].id],
+          }
+        ]
+      },
     )
     updated_checkout = checkout.Checkout(**response_json)
 
-    method = updated_checkout.fulfillment.root.methods[0]
-    destinations = method.destinations
+    method = updated_checkout.model_extra["fulfillment"]["methods"][0]
+    destinations = method["destinations"]
     self.assertGreaterEqual(len(destinations), 2)
 
     # Verify IDs (assuming deterministic order or check existence)
-    dest_ids = [d.root.id for d in destinations]
+    dest_ids = [d["id"] for d in destinations]
     self.assertIn("addr_1", dest_ids)
     self.assertIn("addr_2", dest_ids)
 
-    # Select addr_2
     fulfillment_payload = {
-      "methods": [{"type": "shipping", "selected_destination_id": "addr_2"}]
+      "methods": [
+        {
+          "id": method.get("id", "method_1"),
+          "type": "shipping",
+          "selected_destination_id": "addr_2",
+          "line_item_ids": [checkout_obj.line_items[0].id],
+        }
+      ]
     }
     response_json = self.update_checkout_session(
       updated_checkout, fulfillment=fulfillment_payload
@@ -287,20 +346,22 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
 
     # Verify selection in hierarchical model
     self.assertEqual(
-      final_checkout.fulfillment.root.methods[0].selected_destination_id,
+      final_checkout.model_extra["fulfillment"]["methods"][0][
+        "selected_destination_id"
+      ],
       "addr_2",
     )
 
     # Verify selection details from the selected destination
-    method = final_checkout.fulfillment.root.methods[0]
+    method = final_checkout.model_extra["fulfillment"]["methods"][0]
     selected_dest = next(
-      d for d in method.destinations if d.root.id == "addr_2"
+      d for d in method["destinations"] if d["id"] == "addr_2"
     )
     self.assertEqual(
-      selected_dest.root.street_address,
+      selected_dest["street_address"],
       "456 Oak Ave",
     )
-    self.assertEqual(selected_dest.root.postal_code, "10012")
+    self.assertEqual(selected_dest["postal_code"], "10012")
 
   def test_known_customer_new_address(self) -> None:
     """Test that providing a new address works for a known customer."""
@@ -321,6 +382,8 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
       "methods": [
         {
           "type": "shipping",
+          "id": "method_1",
+          "line_item_ids": [checkout_obj.line_items[0].id],
           "destinations": [new_address],
           "selected_destination_id": "dest_new",
         }
@@ -332,7 +395,7 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
     )
     updated_checkout = checkout.Checkout(**response_json)
 
-    method = updated_checkout.fulfillment.root.methods[0]
+    method = updated_checkout.model_extra["fulfillment"]["methods"][0]
 
     # Should see the new address (and potentially the injected ones if the
     # server merges them, but based on current implementation logic, client
@@ -343,12 +406,12 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
     # or not m_data["destinations"]): inject...
     # So if we provide destinations, it WON'T inject.
 
-    self.assertLen(method.destinations, 1)
-    self.assertEqual(method.destinations[0].root.id, "dest_new")
+    self.assertLen(method["destinations"], 1)
+    self.assertEqual(method["destinations"][0]["id"], "dest_new")
 
     # And we should get options calculated for CA
-    group = method.groups[0]
-    self.assertTrue(any(o.id == "exp-ship-intl" for o in group.options))
+    group = method["groups"][0]
+    self.assertTrue(any(o["id"] == "exp-ship-intl" for o in group["options"]))
 
   def test_new_user_new_address_persistence(self) -> None:
     """Test that a new address for a new user is persisted and ID generated.
@@ -368,16 +431,19 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
     # New address without ID
     new_address = {
       "street_address": "789 Pine St",
-      "address_locality": "Villagetown",
+      "address_locality": "Springfield",
       "address_region": "NY",
       "postal_code": "10001",
       "address_country": "US",
+      "id": "",
     }
 
     fulfillment_payload = {
       "methods": [
         {
           "type": "shipping",
+          "id": "method_1",
+          "line_item_ids": [checkout_obj.line_items[0].id],
           "destinations": [new_address],
         }
       ]
@@ -388,12 +454,12 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
     )
     updated_checkout = checkout.Checkout(**response_json)
 
-    method = updated_checkout.fulfillment.root.methods[0]
-    self.assertIsNotNone(method.destinations)
-    self.assertLen(method.destinations, 1)
+    method = updated_checkout.model_extra["fulfillment"]["methods"][0]
+    self.assertIsNotNone(method["destinations"])
+    self.assertLen(method["destinations"], 1)
 
     # ID should be generated
-    generated_id = method.destinations[0].root.id
+    generated_id = method["destinations"][0]["id"]
     self.assertTrue(generated_id, "ID should be generated for new address")
 
     # Verify persistence by creating another checkout for same user
@@ -404,14 +470,23 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
     )
     checkout_obj_2 = checkout.Checkout(**response_json_2)
     response_json_2 = self.update_checkout_session(
-      checkout_obj_2, fulfillment={"methods": [{"type": "shipping"}]}
+      checkout_obj_2,
+      fulfillment={
+        "methods": [
+          {
+            "id": "method_1",
+            "type": "shipping",
+            "line_item_ids": [checkout_obj.line_items[0].id],
+          }
+        ]
+      },
     )
     updated_checkout_2 = checkout.Checkout(**response_json_2)
-    method_2 = updated_checkout_2.fulfillment.root.methods[0]
+    method_2 = updated_checkout_2.model_extra["fulfillment"]["methods"][0]
 
-    self.assertIsNotNone(method_2.destinations)
+    self.assertIsNotNone(method_2["destinations"])
     # Could be more if tests re-run, but should contain our ID
-    dest_ids = [d.root.id for d in method_2.destinations]
+    dest_ids = [d["id"] for d in method_2["destinations"]]
     self.assertIn(generated_id, dest_ids)
 
   def test_known_user_existing_address_reuse(self) -> None:
@@ -435,12 +510,15 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
       "address_region": "IL",
       "postal_code": "62704",
       "address_country": "US",
+      "id": "",
     }
 
     fulfillment_payload = {
       "methods": [
         {
           "type": "shipping",
+          "id": "method_1",
+          "line_item_ids": [checkout_obj.line_items[0].id],
           "destinations": [matching_address],
         }
       ]
@@ -451,12 +529,12 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
     )
     updated_checkout = checkout.Checkout(**response_json)
 
-    method = updated_checkout.fulfillment.root.methods[0]
-    self.assertIsNotNone(method.destinations)
-    self.assertLen(method.destinations, 1)
+    method = updated_checkout.model_extra["fulfillment"]["methods"][0]
+    self.assertIsNotNone(method["destinations"])
+    self.assertLen(method["destinations"], 1)
 
     # Should reuse addr_1
-    self.assertEqual(method.destinations[0].root.id, "addr_1")
+    self.assertEqual(method["destinations"][0]["id"], "addr_1")
 
   def test_free_shipping_on_expensive_order(self) -> None:
     """Test that free shipping is offered for orders over $100."""
@@ -476,6 +554,8 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
       "methods": [
         {
           "type": "shipping",
+          "id": "method_1",
+          "line_item_ids": [checkout_obj.line_items[0].id],
           "destinations": [address],
           "selected_destination_id": "dest_us",
         }
@@ -487,18 +567,24 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
     )
     updated_checkout = checkout.Checkout(**response_json)
 
-    options = updated_checkout.fulfillment.root.methods[0].groups[0].options
+    options = updated_checkout.model_extra["fulfillment"]["methods"][0][
+      "groups"
+    ][0]["options"]
     free_shipping_option = next(
-      (o for o in options if o.id == "std-ship"), None
+      (o for o in options if o["id"] == "std-ship"), None
     )
 
     self.assertIsNotNone(free_shipping_option)
     opt_total = next(
-      (t.amount for t in free_shipping_option.totals if t.type == "total"),
+      (
+        t["amount"]
+        for t in free_shipping_option["totals"]
+        if t["type"] == "total"
+      ),
       None,
     )
     self.assertEqual(opt_total, 0)
-    self.assertIn("Free", free_shipping_option.title)
+    self.assertIn("Free", free_shipping_option["title"])
 
   def test_free_shipping_for_specific_item(self) -> None:
     """Test that free shipping is offered for eligible items."""
@@ -518,6 +604,8 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
       "methods": [
         {
           "type": "shipping",
+          "id": "method_1",
+          "line_item_ids": [checkout_obj.line_items[0].id],
           "destinations": [address],
           "selected_destination_id": "dest_us",
         }
@@ -529,18 +617,24 @@ class FulfillmentTest(integration_test_utils.IntegrationTestBase):
     )
     updated_checkout = checkout.Checkout(**response_json)
 
-    options = updated_checkout.fulfillment.root.methods[0].groups[0].options
+    options = updated_checkout.model_extra["fulfillment"]["methods"][0][
+      "groups"
+    ][0]["options"]
     free_shipping_option = next(
-      (o for o in options if o.id == "std-ship"), None
+      (o for o in options if o["id"] == "std-ship"), None
     )
 
     self.assertIsNotNone(free_shipping_option)
     opt_total = next(
-      (t.amount for t in free_shipping_option.totals if t.type == "total"),
+      (
+        t["amount"]
+        for t in free_shipping_option["totals"]
+        if t["type"] == "total"
+      ),
       None,
     )
     self.assertEqual(opt_total, 0)
-    self.assertIn("Free", free_shipping_option.title)
+    self.assertIn("Free", free_shipping_option["title"])
 
 
 if __name__ == "__main__":

@@ -16,17 +16,19 @@
 
 from absl.testing import absltest
 import integration_test_utils
-from ucp_sdk.models.schemas.shopping import checkout_update_req
-from ucp_sdk.models.schemas.shopping import fulfillment_resp as checkout
-from ucp_sdk.models.schemas.shopping import payment_update_req
-from ucp_sdk.models.schemas.shopping.payment_resp import (
-  PaymentResponse as Payment,
+from ucp_sdk.models.schemas.shopping import (
+  checkout_update_request as checkout_update_req,
 )
-from ucp_sdk.models.schemas.shopping.types import item_update_req
-from ucp_sdk.models.schemas.shopping.types import line_item_update_req
+from ucp_sdk.models.schemas.shopping import checkout as checkout
+from ucp_sdk.models.schemas.shopping import payment_update_request
+from ucp_sdk.models.schemas.shopping.payment import (
+  Payment,
+)
+from ucp_sdk.models.schemas.shopping.types import item_update_request
+from ucp_sdk.models.schemas.shopping.types import line_item_update_request
 
 # Rebuild models to resolve forward references
-checkout.Checkout.model_rebuild(_types_namespace={"PaymentResponse": Payment})
+checkout.Checkout.model_rebuild(_types_namespace={"Payment": Payment})
 
 
 class CheckoutLifecycleTest(integration_test_utils.IntegrationTestBase):
@@ -87,22 +89,20 @@ class CheckoutLifecycleTest(integration_test_utils.IntegrationTestBase):
     checkout_id = checkout_obj.id
 
     # Construct Update Request
-    item_update = item_update_req.ItemUpdateRequest(
+    item_update = item_update_request.ItemUpdateRequest(
       id=checkout_obj.line_items[0].item.id,
-      title=checkout_obj.line_items[0].item.title,
     )
-    line_item_update = line_item_update_req.LineItemUpdateRequest(
+    line_item_update = line_item_update_request.LineItemUpdateRequest(
       id=checkout_obj.line_items[0].id,
       item=item_update,
       quantity=2,
     )
 
-    payment_update = payment_update_req.PaymentUpdateRequest(
-      selected_instrument_id=checkout_obj.payment.selected_instrument_id,
+    payment_update = payment_update_request.PaymentUpdateRequest(
       instruments=checkout_obj.payment.instruments,
       handlers=[
         h.model_dump(mode="json", exclude_none=True)
-        for h in checkout_obj.payment.handlers
+        for h in checkout_obj.payment.instruments
       ],
     )
 
@@ -243,21 +243,19 @@ class CheckoutLifecycleTest(integration_test_utils.IntegrationTestBase):
     self._cancel_checkout(checkout_id)
 
     # Try Update
-    item_update = item_update_req.ItemUpdateRequest(
+    item_update = item_update_request.ItemUpdateRequest(
       id=checkout_obj.line_items[0].item.id,
-      title=checkout_obj.line_items[0].item.title,
     )
-    line_item_update = line_item_update_req.LineItemUpdateRequest(
+    line_item_update = line_item_update_request.LineItemUpdateRequest(
       id=checkout_obj.line_items[0].id,
       item=item_update,
       quantity=2,
     )
-    payment_update = payment_update_req.PaymentUpdateRequest(
-      selected_instrument_id=checkout_obj.payment.selected_instrument_id,
+    payment_update = payment_update_request.PaymentUpdateRequest(
       instruments=checkout_obj.payment.instruments,
       handlers=[
         h.model_dump(mode="json", exclude_none=True)
-        for h in checkout_obj.payment.handlers
+        for h in checkout_obj.payment.instruments
       ],
     )
     update_payload = checkout_update_req.CheckoutUpdateRequest(
@@ -353,21 +351,19 @@ class CheckoutLifecycleTest(integration_test_utils.IntegrationTestBase):
     self._complete_checkout(checkout_id)
 
     # Try Update
-    item_update = item_update_req.ItemUpdateRequest(
+    item_update = item_update_request.ItemUpdateRequest(
       id=checkout_obj.line_items[0].item.id,
-      title=checkout_obj.line_items[0].item.title,
     )
-    line_item_update = line_item_update_req.LineItemUpdateRequest(
+    line_item_update = line_item_update_request.LineItemUpdateRequest(
       id=checkout_obj.line_items[0].id,
       item=item_update,
       quantity=2,
     )
-    payment_update = payment_update_req.PaymentUpdateRequest(
-      selected_instrument_id=checkout_obj.payment.selected_instrument_id,
+    payment_update = payment_update_request.PaymentUpdateRequest(
       instruments=checkout_obj.payment.instruments,
       handlers=[
         h.model_dump(mode="json", exclude_none=True)
-        for h in checkout_obj.payment.handlers
+        for h in checkout_obj.payment.instruments
       ],
     )
     update_payload = checkout_update_req.CheckoutUpdateRequest(
