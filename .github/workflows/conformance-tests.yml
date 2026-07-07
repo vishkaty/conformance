@@ -47,12 +47,20 @@ jobs:
         with:
           repository: Universal-Commerce-Protocol/samples
           path: samples
+          # Pinned to the combination last verified green by the nightly run
+          # on 2026-06-30 (run 28418270435). Bump deliberately after
+          # validating a newer combination.
+          ref: 74e66deedc8270482f198a76c5ed1e6ff270814e
 
       - name: Check out SDK repo
         uses: actions/checkout@v5
         with:
           repository: Universal-Commerce-Protocol/python-sdk
           path: python-sdk
+          # See pin note above (samples). python-sdk@main moved past this on
+          # 2026-06-30 (#48) and the flower-shop server no longer boots,
+          # which is why the nightly has been red since 2026-07-01.
+          ref: f54858e0cf1e8933cc0e9d89b380e2cd4a0b3f00
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.2.0
