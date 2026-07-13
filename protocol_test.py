@@ -17,8 +17,11 @@
 from absl.testing import absltest
 import integration_test_utils
 import httpx
-from pydantic import ValidationError
-from ucp_sdk.models.schemas.ucp import BusinessSchema, ReverseDomainName
+from pydantic import TypeAdapter, ValidationError
+from ucp_sdk.models.schemas.ucp import BusinessSchema
+from ucp_sdk.models.schemas.shopping.types.reverse_domain_name import (
+  ReverseDomainName,
+)
 from ucp_sdk.models.schemas.shopping import checkout as checkout
 from ucp_sdk.models.schemas.shopping.payment import (
   Payment,
@@ -45,7 +48,8 @@ class ProtocolTest(integration_test_utils.IntegrationTestBase):
       A list of (JSON path, URL) tuples.
 
     """
-    profile = profile
+    if isinstance(profile, dict):
+      profile = profile.get("ucp", profile)
     urls = set()
 
     # 1. Services
@@ -157,17 +161,20 @@ class ProtocolTest(integration_test_utils.IntegrationTestBase):
     self.assert_response_status(response, 200)
     data = response.json()
 
+    self.assertIn("ucp", data, "Discovery profile must be wrapped in 'ucp' key")
+    ucp_data = data["ucp"]
+
     # Validate schema using SDK model
-    BusinessSchema(**data)
+    BusinessSchema(**ucp_data)
 
     self.assertEqual(
-      data.get("version"),
+      ucp_data.get("version"),
       "2026-01-23",
       msg="Unexpected UCP version in discovery doc",
     )
 
     # Verify Capabilities
-    capabilities = set(data.get("capabilities", {}))
+    capabilities = set(ucp_data.get("capabilities", {}))
     expected_capabilities = {
       "dev.ucp.shopping.checkout",
       "dev.ucp.shopping.order",
@@ -182,15 +189,15 @@ class ProtocolTest(integration_test_utils.IntegrationTestBase):
     )
 
     # Verify Payment Handlers - structural validation (server-agnostic)
-    if data.get("payment_handlers"):
+    if ucp_data.get("payment_handlers"):
       handler_count = 0
-      for handler_name, handler_list in data.get(
+      for handler_name, handler_list in ucp_data.get(
         "payment_handlers", {}
       ).items():
         # Validate handler group name using the SDK's ReverseDomainName
         # model, which enforces the pattern defined in the UCP spec.
         try:
-          ReverseDomainName(root=str(handler_name))
+          TypeAdapter(ReverseDomainName).validate_python(str(handler_name))
         except ValidationError as e:
           self.fail(
             f"Payment handler group name '{handler_name}' "
@@ -216,7 +223,7 @@ class ProtocolTest(integration_test_utils.IntegrationTestBase):
       )
 
     # Verify shopping capability
-    shopping_services = data.get("services", {}).get("dev.ucp.shopping")
+    shopping_services = ucp_data.get("services", {}).get("dev.ucp.shopping")
     self.assertIsNotNone(shopping_services, "Shopping service missing")
     shopping_service = (
       shopping_services[0]
@@ -240,7 +247,8 @@ class ProtocolTest(integration_test_utils.IntegrationTestBase):
     discovery_resp = self.client.get("/.well-known/ucp")
     self.assert_response_status(discovery_resp, 200)
     profile_dict = discovery_resp.json()
-    shopping_services = profile_dict.get("services", {}).get("dev.ucp.shopping")
+    ucp_data = profile_dict.get("ucp", profile_dict)
+    shopping_services = ucp_data.get("services", {}).get("dev.ucp.shopping")
     self.assertIsNotNone(
       shopping_services, "Shopping service not found in discovery"
     )

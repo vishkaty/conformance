@@ -37,9 +37,6 @@ from ucp_sdk.models.schemas.shopping.checkout_update_request import (
   CheckoutUpdateRequest,
 )
 from ucp_sdk.models.schemas.shopping.types import (
-  fulfillment_destination_create_request as fdc_req,
-)
-from ucp_sdk.models.schemas.shopping.types import (
   fulfillment_group_create_request,
 )
 from ucp_sdk.models.schemas.shopping.types import (
@@ -392,8 +389,10 @@ class IntegrationTestBase(absltest.TestCase):
       self.assert_response_status(discovery_resp, 200)
 
       profile_data = discovery_resp.json()
+      # Support both wrapped and unwrapped (UCP wrapper)
+      ucp_data = profile_data.get("ucp", profile_data)
       # UCP 01-23 validation changed dicts to lists
-      shopping_services = profile_data.get("services", {}).get(
+      shopping_services = ucp_data.get("services", {}).get(
         "dev.ucp.shopping", []
       )
       if not shopping_services:
@@ -481,7 +480,7 @@ class IntegrationTestBase(absltest.TestCase):
 
     if handlers is None:
       handlers = [
-        payment_handler.PaymentHandler(
+        payment_handler.Base(
           id="google_pay",
           name="google.pay",
           version="2026-01-23",
@@ -506,10 +505,8 @@ class IntegrationTestBase(absltest.TestCase):
     fulfillment = None
     if include_fulfillment:
       # Hierarchical Fulfillment Construction
-      destination = fdc_req.FulfillmentDestinationCreateRequest(
-        root=shipping_destination.ShippingDestination(
-          id="dest_1", address_country="US"
-        )
+      destination = shipping_destination.ShippingDestination(
+        id="dest_1", address_country="US"
       )
       group = fulfillment_group_create_request.FulfillmentGroupCreateRequest(
         id="group_1",
