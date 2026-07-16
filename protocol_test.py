@@ -167,21 +167,43 @@ class ProtocolTest(integration_test_utils.IntegrationTestBase):
     # Validate schema using SDK model
     BusinessSchema(**ucp_data)
 
-    self.assertEqual(
-      ucp_data.get("version"),
-      "2026-04-08",
-      msg="Unexpected UCP version in discovery doc",
+    # Universal structural validation: UCP versions are date-based
+    # (YYYY-MM-DD) regardless of which release the server implements.
+    declared_version = ucp_data.get("version")
+    self.assertRegex(
+      str(declared_version),
+      r"^\d{4}-\d{2}-\d{2}$",
+      msg="UCP version in discovery doc must be date-based (YYYY-MM-DD)",
     )
+    # Exact-version assertion is driven by conformance_input.json
+    # ("ucp_version"), so the suite tests the release the merchant targets
+    # instead of a hardcoded literal.
+    expected_version = self.conformance_config.get("ucp_version")
+    if expected_version:
+      self.assertEqual(
+        declared_version,
+        expected_version,
+        msg="Unexpected UCP version in discovery doc",
+      )
 
-    # Verify Capabilities
+    # Verify Capabilities — every capability group name must follow the
+    # reverse-DNS convention (universal), and any capabilities the merchant
+    # is expected to declare come from conformance_input.json
+    # ("required_capabilities"): per the server-selects negotiation model,
+    # capability sets are negotiated per merchant, so no fixed roster is
+    # universally required.
     capabilities = set(ucp_data.get("capabilities", {}))
-    expected_capabilities = {
-      "dev.ucp.shopping.checkout",
-      "dev.ucp.shopping.order",
-      "dev.ucp.shopping.discount",
-      "dev.ucp.shopping.fulfillment",
-      "dev.ucp.shopping.buyer_consent",
-    }
+    for cap_name in capabilities:
+      try:
+        TypeAdapter(ReverseDomainName).validate_python(str(cap_name))
+      except ValidationError as e:
+        self.fail(
+          f"Capability name '{cap_name}' does not follow reverse-DNS "
+          f"convention: {e}"
+        )
+    expected_capabilities = set(
+      self.conformance_config.get("required_capabilities", [])
+    )
     missing_caps = expected_capabilities - capabilities
     self.assertFalse(
       missing_caps,
@@ -230,7 +252,15 @@ class ProtocolTest(integration_test_utils.IntegrationTestBase):
       if isinstance(shopping_services, list)
       else shopping_services
     )
-    self.assertEqual(shopping_service.get("version"), "2026-04-08")
+    # The shopping service entry's version follows the same input-driven
+    # rule as the profile version above.
+    self.assertRegex(
+      str(shopping_service.get("version")),
+      r"^\d{4}-\d{2}-\d{2}$",
+      msg="Shopping service version must be date-based (YYYY-MM-DD)",
+    )
+    if expected_version:
+      self.assertEqual(shopping_service.get("version"), expected_version)
     self.assertIsNotNone(shopping_service.get("transport") == "rest")
     self.assertIsNotNone(shopping_service.get("endpoint"))
 
@@ -271,9 +301,15 @@ class ProtocolTest(integration_test_utils.IntegrationTestBase):
 
     create_payload = self.create_checkout_payload()
 
-    # 1. Compatible Version
+    # 1. Compatible Version — use the version the server itself advertises in
+    # discovery, so the test stays correct across spec releases instead of
+    # pinning a literal that goes stale.
+    advertised_version = ucp_data.get("version")
+    self.assertIsNotNone(
+      advertised_version, "Discovery profile must advertise a UCP version"
+    )
     headers = integration_test_utils.get_headers()
-    headers["UCP-Agent"] = 'profile="..."; version="2026-04-08"'
+    headers["UCP-Agent"] = f'profile="..."; version="{advertised_version}"'
     response = self.client.post(
       checkout_sessions_url,
       json=create_payload.model_dump(
