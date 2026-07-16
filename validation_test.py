@@ -41,13 +41,77 @@ class ValidationTest(integration_test_utils.IntegrationTestBase):
   - POST /checkout-sessions/{id}/complete
   """
 
+  def assert_business_error(
+    self,
+    response,
+    accepted_codes: set[str],
+    error_4xx_substring: str,
+  ) -> None:
+    """Assert a business-level failure in either posture the spec permits.
+
+    The spec models business failures in-band: checkout-rest.md's own
+    "Error Response" example answers an all-items-out-of-stock create with
+    HTTP 200 and ``ucp.status: "error"`` plus a typed ``messages[]`` entry,
+    and partial failures ride as error messages on a created resource. A
+    transport-level 4xx rejection (the posture this repo's Flower Shop
+    reference implements) is also accepted. Each posture is validated
+    strictly:
+
+    - 4xx: the body must describe the error (same substring assertion the
+      tests always made against the reference server).
+    - 200/201: ``messages[]`` must contain at least one ``type: "error"``
+      entry carrying the full message envelope (type, code, content,
+      severity — required by message_error.json), at least one such entry
+      must use an accepted standardized code (checkout.md error-code table /
+      error_code.json examples), and a ``ucp.status: "error"`` response must
+      not carry a checkout resource.
+    """
+    if 400 <= response.status_code < 500:
+      self.assertIn(
+        error_4xx_substring.lower(),
+        response.text.lower(),
+        msg=f"Expected '{error_4xx_substring}' in the 4xx error body",
+      )
+      return
+
+    self.assert_response_status(response, [200, 201])
+    data = response.json()
+    errors = [m for m in data.get("messages", []) if m.get("type") == "error"]
+    self.assertTrue(
+      errors,
+      "Business failure answered with 2xx must carry an in-band "
+      "messages[] entry of type 'error' (checkout.md error handling)",
+    )
+    for message in errors:
+      for field in ("type", "code", "content", "severity"):
+        self.assertTrue(
+          message.get(field),
+          f"Error message missing required field '{field}' "
+          f"(message envelope): {message}",
+        )
+    codes = {m.get("code") for m in errors}
+    self.assertTrue(
+      codes & accepted_codes,
+      f"Expected an error code in {sorted(accepted_codes)}, got "
+      f"{sorted(codes)}",
+    )
+    ucp_envelope = data.get("ucp") or {}
+    if ucp_envelope.get("status") == "error":
+      self.assertIsNone(
+        data.get("id"),
+        "A ucp.status='error' response must not include a checkout "
+        "resource (checkout.md: 'no resource is included in the response "
+        "body')",
+      )
+
   def test_out_of_stock(self) -> None:
     """Test validation for out-of-stock items.
 
     Given a product with 0 inventory,
     When a checkout creation request is made for this item,
-    Then the server should return a 400 Bad Request error indicating
-    insufficient stock.
+    Then the server either rejects with a 4xx describing the stock problem,
+    or answers in-band per the spec's error model with a typed
+    'out_of_stock' error message.
     """
     # Get out of stock item from config
     out_of_stock_item = self.conformance_config.get(
@@ -67,11 +131,10 @@ class ValidationTest(integration_test_utils.IntegrationTestBase):
       headers=integration_test_utils.get_headers(),
     )
 
-    self.assert_response_status(response, 400)
-    self.assertIn(
-      "Insufficient stock",
-      response.text,
-      msg="Expected 'Insufficient stock' message",
+    self.assert_business_error(
+      response,
+      accepted_codes={"out_of_stock", "item_unavailable"},
+      error_4xx_substring="stock",
     )
 
   def test_update_inventory_validation(self) -> None:
@@ -128,8 +191,9 @@ class ValidationTest(integration_test_utils.IntegrationTestBase):
 
     Given a request for a product ID that does not exist in the catalog,
     When a checkout creation request is made,
-    Then the server should return a 400 Bad Request error indicating the product
-    was not found.
+    Then the server either rejects with a 4xx indicating the product was not
+    found, or answers in-band per the spec's error model with a typed error
+    message.
     """
     non_existent_item = self.conformance_config.get(
       "non_existent_item",
@@ -148,9 +212,10 @@ class ValidationTest(integration_test_utils.IntegrationTestBase):
       headers=integration_test_utils.get_headers(),
     )
 
-    self.assert_response_status(response, 400)
-    self.assertIn(
-      "not found", response.text.lower(), msg="Expected 'not found' message"
+    self.assert_business_error(
+      response,
+      accepted_codes={"not_found", "item_unavailable"},
+      error_4xx_substring="not found",
     )
 
   def test_payment_failure(self) -> None:
@@ -204,12 +269,13 @@ class ValidationTest(integration_test_utils.IntegrationTestBase):
     )
 
   def test_structured_error_messages(self) -> None:
-    """Test that error responses conform to the Message schema.
+    """Test that error responses carry structured, machine-readable detail.
 
     Given a request that triggers an error (e.g., out of stock),
-    When the server responds with an error code (400),
-    Then the response body should contain a structured 'detail' field describing
-    the error.
+    Then a 4xx rejection must carry a structured 'detail' field describing
+    the error, and an in-band answer must carry the full message envelope
+    (type, code, content, severity) — the structural requirement behind
+    both postures.
     """
     # Get out of stock item from config
     out_of_stock_item = self.conformance_config.get(
@@ -229,12 +295,22 @@ class ValidationTest(integration_test_utils.IntegrationTestBase):
       headers=integration_test_utils.get_headers(),
     )
 
-    self.assert_response_status(response, 400)
+    if 400 <= response.status_code < 500:
+      # 4xx posture: the body must be structured, not free text.
+      data = response.json()
+      self.assertTrue(
+        data.get("detail"), "Error response missing 'detail' field"
+      )
+      self.assertIn("stock", str(data["detail"]).lower())
+      return
 
-    # Check for structured error
-    data = response.json()
-    self.assertTrue(data.get("detail"), "Error response missing 'detail' field")
-    self.assertIn("Insufficient stock", data["detail"])
+    # In-band posture: the message envelope IS the structured error; the
+    # shared assertion validates every required envelope field.
+    self.assert_business_error(
+      response,
+      accepted_codes={"out_of_stock", "item_unavailable"},
+      error_4xx_substring="stock",
+    )
 
 
 if __name__ == "__main__":
