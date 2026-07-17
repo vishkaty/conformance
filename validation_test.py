@@ -96,13 +96,18 @@ class ValidationTest(integration_test_utils.IntegrationTestBase):
       f"{sorted(codes)}",
     )
     ucp_envelope = data.get("ucp") or {}
-    if ucp_envelope.get("status") == "error":
-      self.assertIsNone(
-        data.get("id"),
-        "A ucp.status='error' response must not include a checkout "
-        "resource (checkout.md: 'no resource is included in the response "
-        "body')",
-      )
+    self.assertEqual(
+      ucp_envelope.get("status"),
+      "error",
+      "Expected ucp.status to be 'error' for a business-level failure "
+      "answered with 2xx",
+    )
+    self.assertIsNone(
+      data.get("id"),
+      "A ucp.status='error' response must not include a checkout "
+      "resource (checkout.md: 'no resource is included in the response "
+      "body')",
+    )
 
   def test_out_of_stock(self) -> None:
     """Test validation for out-of-stock items.
