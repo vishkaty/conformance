@@ -95,7 +95,7 @@ against, so the suite is not hardwired to the Flower Shop sample:
   `YYYY-MM-DD` version) is enforced.
 - `required_capabilities` — capability names this merchant is expected to
   declare in discovery. Capability sets are negotiated per merchant, so list
-  the ones your implementation ships; capability *names* are always validated
+  the ones your implementation ships; capability _names_ are always validated
   against the reverse-DNS convention regardless.
 
 Version negotiation uses the version the server advertises in discovery as the
