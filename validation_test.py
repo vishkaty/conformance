@@ -61,10 +61,22 @@ class ValidationTest(integration_test_utils.IntegrationTestBase):
       tests always made against the reference server).
     - 200/201: ``messages[]`` must contain at least one ``type: "error"``
       entry carrying the full message envelope (type, code, content,
-      severity — required by message_error.json), at least one such entry
-      must use an accepted standardized code (checkout.md error-code table /
-      error_code.json examples), and a ``ucp.status: "error"`` response must
-      not carry a checkout resource.
+      severity — required by message_error.json), and at least one such
+      entry must use an accepted standardized code (checkout.md error-code
+      table / error_code.json examples). Two in-band error shapes are
+      accepted:
+
+      - resourceless (no ``id``): the ``error_response`` shape for
+        operations that could not establish a resource — ``ucp.status``
+        must be ``"error"`` (checkout.md: "no resource is included in the
+        response body");
+      - resource-bearing (``id`` present): the failure rides as
+        ``messages[]`` on the checkout resource itself, the spec's shape
+        when the session already exists (checkout.md status values;
+        checkout-rest.md's create example answers a missing required field
+        with ``status: "incomplete"`` plus a typed message) — the checkout
+        must not have completed (``status`` != ``"completed"``, no
+        ``order``).
     """
     if 400 <= response.status_code < 500:
       self.assertIn(
@@ -95,19 +107,49 @@ class ValidationTest(integration_test_utils.IntegrationTestBase):
       f"Expected an error code in {sorted(accepted_codes)}, got "
       f"{sorted(codes)}",
     )
-    ucp_envelope = data.get("ucp") or {}
-    self.assertEqual(
-      ucp_envelope.get("status"),
-      "error",
-      "Expected ucp.status to be 'error' for a business-level failure "
-      "answered with 2xx",
-    )
-    self.assertIsNone(
-      data.get("id"),
-      "A ucp.status='error' response must not include a checkout "
-      "resource (checkout.md: 'no resource is included in the response "
-      "body')",
-    )
+    if data.get("id") is None:
+      # Resourceless error_response shape: no resource was established.
+      ucp_envelope = data.get("ucp") or {}
+      self.assertEqual(
+        ucp_envelope.get("status"),
+        "error",
+        "Expected ucp.status to be 'error' for a resourceless "
+        "business-failure response (checkout.md: 'no resource is "
+        "included in the response body')",
+      )
+    else:
+      # Resource-bearing shape: the session exists and the failure rides
+      # as messages[] on the checkout resource. ucp.status is the shape
+      # discriminator (checkout.md): "error" means error information is
+      # returned INSTEAD of a resource, so a resource-bearing answer must
+      # not claim it (absent defaults to "success" per ucp.json base).
+      ucp_envelope = data.get("ucp") or {}
+      self.assertEqual(
+        ucp_envelope.get("status", "success"),
+        "success",
+        "A response carrying a checkout resource must not set "
+        "ucp.status 'error' (checkout.md: an error-status response "
+        "includes no resource)",
+      )
+      # The failed operation must leave the checkout in a valid,
+      # non-completed state (checkout.json status enum).
+      self.assertIn(
+        data.get("status"),
+        {
+          "incomplete",
+          "requires_escalation",
+          "ready_for_complete",
+          "complete_in_progress",
+          "canceled",
+        },
+        "A checkout carrying an in-band business-failure message must "
+        "report a valid, non-'completed' status",
+      )
+      self.assertIsNone(
+        data.get("order"),
+        "A checkout carrying an in-band business-failure message must "
+        "not carry an order",
+      )
 
   def test_out_of_stock(self) -> None:
     """Test validation for out-of-stock items.
@@ -147,8 +189,12 @@ class ValidationTest(integration_test_utils.IntegrationTestBase):
 
     Given an existing checkout session with a valid quantity,
     When the line item quantity is updated to exceed available stock,
-    Then the server should return a 400 Bad Request error indicating
-    insufficient stock.
+    Then the server either rejects with a 4xx describing the stock
+    problem, answers in-band per the spec's error model with a typed
+    'out_of_stock'/'item_unavailable' error message, or clamps the
+    quantity and reports a 'quantity_adjusted' warning (checkout-rest.md
+    "Business Outcomes" — the spec's canonical answer to requesting more
+    units than are in stock).
     """
     response_json = self.create_checkout_session()
     checkout_obj = checkout.Checkout(**response_json)
@@ -186,9 +232,33 @@ class ValidationTest(integration_test_utils.IntegrationTestBase):
       headers=integration_test_utils.get_headers(),
     )
 
-    self.assert_response_status(response, 400)
-    self.assertIn(
-      "stock", response.text.lower(), msg="Expected 'stock' message"
+    if response.status_code in (200, 201):
+      data = response.json()
+      messages = data.get("messages", [])
+      adjusted = [
+        m
+        for m in messages
+        if m.get("type") == "warning" and m.get("code") == "quantity_adjusted"
+      ]
+      if adjusted and not any(m.get("type") == "error" for m in messages):
+        # Clamp-and-warn posture (checkout-rest.md "Business Outcomes"):
+        # the server fulfills what it can and reports the adjustment. The
+        # returned quantity must actually be clamped below the requested
+        # amount — silently accepting the excess would be a real failure.
+        quantities = [li.get("quantity") for li in data.get("line_items", [])]
+        self.assertTrue(
+          quantities
+          and all(isinstance(q, int) and q < 10001 for q in quantities),
+          "A quantity_adjusted warning must come with the line-item "
+          "quantity actually clamped below the requested amount, got "
+          f"{quantities}",
+        )
+        return
+
+    self.assert_business_error(
+      response,
+      accepted_codes={"out_of_stock", "item_unavailable"},
+      error_4xx_substring="stock",
     )
 
   def test_product_not_found(self) -> None:
