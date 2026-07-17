@@ -203,16 +203,22 @@ class AgentProfileServer:
 
   PROFILE_PATH = "/profiles/shopping-agent.json"
 
-  def __init__(self, *, port: int, webhook_port: int):
+  def __init__(
+    self, *, port: int, webhook_port: int, ucp_version: str = "2026-04-08"
+  ):
     """Initialize the AgentProfileServer.
 
     Args:
       port: The port to listen on.
       webhook_port: The port where the webhook server is listening.
+      ucp_version: The UCP release the profile should declare (driven by
+        conformance_input.json so the suite tests the release the merchant
+        targets).
 
     """
     self.port = port
     self.webhook_port = webhook_port
+    self.ucp_version = ucp_version
     self.app = FastAPI()
 
     # Resolve and pre-read the profile template to avoid repeated file I/O
@@ -234,7 +240,7 @@ class AgentProfileServer:
       # Dynamically inject the correct webhook port into the cached template
       content = self._profile_template.replace(
         "{webhook_port}", str(self.webhook_port)
-      )
+      ).replace("{ucp_version}", self.ucp_version)
       content_dict = json.loads(content)
       return JSONResponse(content=content_dict)
 
@@ -530,7 +536,9 @@ class IntegrationTestBase(absltest.TestCase):
 
     # Start the agent profile server
     self.agent_server = AgentProfileServer(
-      port=FLAGS.mock_agent_port, webhook_port=FLAGS.mock_webhook_port
+      port=FLAGS.mock_agent_port,
+      webhook_port=FLAGS.mock_webhook_port,
+      ucp_version=self.conformance_config.get("ucp_version", "2026-04-08"),
     )
     self.agent_server.start()
     self._shopping_service_endpoint: str | None = None
@@ -635,7 +643,7 @@ class IntegrationTestBase(absltest.TestCase):
         payment_handler.Base(
           id="google_pay",
           name="google.pay",
-          version="2026-04-08",
+          version=self.conformance_config.get("ucp_version", "2026-04-08"),
           spec="https://example.com/spec",
           config_schema="https://example.com/schema",
           instrument_schemas=["https://example.com/instrument_schema"],
@@ -701,7 +709,9 @@ class IntegrationTestBase(absltest.TestCase):
       fulfillment=fulfillment,
     )
     checkout_req.status = "incomplete"
-    checkout_req.ucp = {"version": "2026-04-08"}
+    checkout_req.ucp = {
+      "version": self.conformance_config.get("ucp_version", "2026-04-08")
+    }
     checkout_req.totals = []
     checkout_req.links = []
 
