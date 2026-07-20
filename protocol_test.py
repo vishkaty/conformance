@@ -178,13 +178,14 @@ class ProtocolTest(integration_test_utils.IntegrationTestBase):
     # Exact-version assertion is driven by conformance_input.json
     # ("ucp_version"), so the suite tests the release the merchant targets
     # instead of a hardcoded literal.
-    expected_version = self.conformance_config.get("ucp_version")
-    if expected_version:
-      self.assertEqual(
-        declared_version,
-        expected_version,
-        msg="Unexpected UCP version in discovery doc",
-      )
+    expected_version = self.conformance_config.get(
+      "ucp_version", integration_test_utils.DEFAULT_UCP_VERSION
+    )
+    self.assertEqual(
+      declared_version,
+      expected_version,
+      msg="Unexpected UCP version in discovery doc",
+    )
 
     # Verify Capabilities — every capability group name must follow the
     # reverse-DNS convention (universal), and any capabilities the merchant
@@ -202,7 +203,10 @@ class ProtocolTest(integration_test_utils.IntegrationTestBase):
           f"convention: {e}"
         )
     expected_capabilities = set(
-      self.conformance_config.get("required_capabilities", [])
+      self.conformance_config.get(
+        "required_capabilities",
+        integration_test_utils.DEFAULT_REQUIRED_CAPABILITIES,
+      )
     )
     missing_caps = expected_capabilities - capabilities
     self.assertFalse(
@@ -259,8 +263,7 @@ class ProtocolTest(integration_test_utils.IntegrationTestBase):
       r"^\d{4}-\d{2}-\d{2}$",
       msg="Shopping service version must be date-based (YYYY-MM-DD)",
     )
-    if expected_version:
-      self.assertEqual(shopping_service.get("version"), expected_version)
+    self.assertEqual(shopping_service.get("version"), expected_version)
     self.assertIsNotNone(shopping_service.get("transport") == "rest")
     self.assertIsNotNone(shopping_service.get("endpoint"))
 

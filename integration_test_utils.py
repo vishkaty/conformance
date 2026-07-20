@@ -55,6 +55,15 @@ class UnifiedUpdate(CheckoutUpdateRequest):
   """Client-side unified update model to support extensions."""
 
 
+DEFAULT_UCP_VERSION = "2026-04-08"
+DEFAULT_REQUIRED_CAPABILITIES = [
+  "dev.ucp.shopping.checkout",
+  "dev.ucp.shopping.order",
+  "dev.ucp.shopping.discount",
+  "dev.ucp.shopping.fulfillment",
+  "dev.ucp.shopping.buyer_consent",
+]
+
 FLAGS = flags.FLAGS
 try:
   flags.DEFINE_string("server_url", None, "Base URL of the server")
@@ -204,7 +213,11 @@ class AgentProfileServer:
   PROFILE_PATH = "/profiles/shopping-agent.json"
 
   def __init__(
-    self, *, port: int, webhook_port: int, ucp_version: str = "2026-04-08"
+    self,
+    *,
+    port: int,
+    webhook_port: int,
+    ucp_version: str = DEFAULT_UCP_VERSION,
   ):
     """Initialize the AgentProfileServer.
 
@@ -538,7 +551,9 @@ class IntegrationTestBase(absltest.TestCase):
     self.agent_server = AgentProfileServer(
       port=FLAGS.mock_agent_port,
       webhook_port=FLAGS.mock_webhook_port,
-      ucp_version=self.conformance_config.get("ucp_version", "2026-04-08"),
+      ucp_version=self.conformance_config.get(
+        "ucp_version", DEFAULT_UCP_VERSION
+      ),
     )
     self.agent_server.start()
     self._shopping_service_endpoint: str | None = None
@@ -643,7 +658,9 @@ class IntegrationTestBase(absltest.TestCase):
         payment_handler.Base(
           id="google_pay",
           name="google.pay",
-          version=self.conformance_config.get("ucp_version", "2026-04-08"),
+          version=self.conformance_config.get(
+            "ucp_version", DEFAULT_UCP_VERSION
+          ),
           spec="https://example.com/spec",
           config_schema="https://example.com/schema",
           instrument_schemas=["https://example.com/instrument_schema"],
@@ -710,7 +727,7 @@ class IntegrationTestBase(absltest.TestCase):
     )
     checkout_req.status = "incomplete"
     checkout_req.ucp = {
-      "version": self.conformance_config.get("ucp_version", "2026-04-08")
+      "version": self.conformance_config.get("ucp_version", DEFAULT_UCP_VERSION)
     }
     checkout_req.totals = []
     checkout_req.links = []
