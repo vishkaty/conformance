@@ -62,6 +62,7 @@ pymdownx
 Queensway
 renderable
 repudiable
+resourceless
 schemas
 sdjwt
 Sephora
