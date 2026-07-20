@@ -87,6 +87,24 @@ SERVER_URL=http://localhost:${MERCHANT_SERVER_PORT} SIMULATION_SECRET=${SIMULATI
 
 You can customize the test fixtures (SKU, expected pricing, discount codes, shipping destinations) by editing `test_fixtures.json` or passing a custom configuration file using the `--fixture_config` flag.
 
+## Conformance input
+
+`conformance_input.json` carries the merchant-specific values the tests assert
+against, so the suite is not hardwired to the Flower Shop sample:
+
+- `ucp_version` — the spec release the merchant targets; `protocol_test`
+  asserts the discovery profile and shopping service declare exactly this
+  version. When omitted, only the universal structural rule (date-based
+  `YYYY-MM-DD` version) is enforced.
+- `required_capabilities` — capability names this merchant is expected to
+  declare in discovery. Capability sets are negotiated per merchant, so list
+  the ones your implementation ships; capability _names_ are always validated
+  against the reverse-DNS convention regardless.
+
+Version negotiation uses the version the server advertises in discovery as the
+compatible header value (with an obviously-future literal for the incompatible
+case), so it stays correct across spec releases.
+
 ## Cleaning Up
 
 Terminate the server using:

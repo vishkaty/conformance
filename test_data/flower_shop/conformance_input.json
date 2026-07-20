@@ -1,4 +1,12 @@
 {
+  "ucp_version": "2026-04-08",
+  "required_capabilities": [
+    "dev.ucp.shopping.checkout",
+    "dev.ucp.shopping.order",
+    "dev.ucp.shopping.discount",
+    "dev.ucp.shopping.fulfillment",
+    "dev.ucp.shopping.buyer_consent"
+  ],
   "currency": "USD",
   "items": [
     {
