@@ -22,5 +22,9 @@
   "non_existent_item": {
     "id": "pink_wumpus",
     "title": "Pink Wumpus"
+  },
+  "test_fixtures": {
+    "valid_discount_code": "10OFF",
+    "valid_discount_code_2": "WELCOME20"
   }
 }
