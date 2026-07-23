@@ -24,8 +24,16 @@ from ucp_sdk.models.schemas.shopping import payment_update_request
 from ucp_sdk.models.schemas.shopping.payment import (
   Payment,
 )
+from ucp_sdk.models.schemas.shopping.types import buyer_update_request
+from ucp_sdk.models.schemas.shopping.types import (
+  fulfillment_group_update_request,
+)
+from ucp_sdk.models.schemas.shopping.types import (
+  fulfillment_method_update_request,
+)
 from ucp_sdk.models.schemas.shopping.types import item_update_request
 from ucp_sdk.models.schemas.shopping.types import line_item_update_request
+from ucp_sdk.models.schemas.shopping.types import shipping_destination
 
 # Rebuild models to resolve forward references
 checkout.Checkout.model_rebuild(_types_namespace={"Payment": Payment})
@@ -41,6 +49,11 @@ class CheckoutLifecycleTest(integration_test_utils.IntegrationTestBase):
   - POST /checkout-sessions/{id}/complete
   - POST /checkout-sessions/{id}/cancel
   """
+
+  DEFAULT_BUYER = {
+    "email": "conformance-test-buyer@example.com",
+    "name": "Conformance Test Buyer",
+  }
 
   def test_create_checkout(self):
     """Test successful checkout creation.
@@ -81,7 +94,7 @@ class CheckoutLifecycleTest(integration_test_utils.IntegrationTestBase):
 
     Given an existing checkout session,
     When a PUT request is sent to /checkout-sessions/{id} with updated line
-    items,
+    items, buyer, and fulfillment address,
     Then the response should be 200 OK and reflect the updates.
     """
     response_json = self.create_checkout_session()
@@ -106,11 +119,57 @@ class CheckoutLifecycleTest(integration_test_utils.IntegrationTestBase):
       ],
     )
 
+    buyer_update = buyer_update_request.BuyerUpdateRequest(
+      email="update-checkout-buyer@example.com",
+      first_name="Jane",
+      last_name="Doe",
+      phone_number="+15555555556",
+    )
+
+    new_destination = shipping_destination.ShippingDestination(
+      id="dest_2",
+      address_country="US",
+      postal_code="90210",
+      locality="Beverly Hills",
+      region="CA",
+      street_address="456 Elm St",
+    )
+
+    existing_method = checkout_obj.fulfillment["methods"][0]
+    existing_group = existing_method["groups"][0]
+
+    group_update = (
+      fulfillment_group_update_request.FulfillmentGroupUpdateRequest(
+        id=existing_group["id"],
+        selected_option_id=existing_group["selected_option_id"],
+        line_item_ids=existing_group["line_item_ids"],
+      )
+    )
+
+    method_update = (
+      fulfillment_method_update_request.FulfillmentMethodUpdateRequest(
+        id=existing_method["id"],
+        type="shipping",
+        destinations=[new_destination],
+        selected_destination_id="dest_2",
+        line_item_ids=[li.id for li in checkout_obj.line_items],
+        groups=[group_update],
+      )
+    )
+
+    fulfillment_update = {
+      "methods": [
+        method_update.model_dump(mode="json", exclude_none=True, by_alias=True)
+      ]
+    }
+
     update_payload = checkout_update_req.CheckoutUpdateRequest(
       id=checkout_id,
       currency=checkout_obj.currency,
       line_items=[line_item_update],
       payment=payment_update,
+      buyer=buyer_update,
+      fulfillment=fulfillment_update,
     )
 
     response = self.client.put(
@@ -122,6 +181,30 @@ class CheckoutLifecycleTest(integration_test_utils.IntegrationTestBase):
     )
 
     self.assert_response_status(response, 200)
+
+    # Verify updates in the response
+    resp_json = response.json()
+    self.assertEqual(
+      resp_json.get("buyer", {}).get("email"),
+      "update-checkout-buyer@example.com",
+    )
+    self.assertEqual(resp_json.get("buyer", {}).get("first_name"), "Jane")
+    self.assertEqual(resp_json.get("buyer", {}).get("last_name"), "Doe")
+
+    fulfillment_resp = resp_json.get("fulfillment", {})
+    self.assertTrue(fulfillment_resp, "Fulfillment missing in response")
+    method_resp = fulfillment_resp.get("methods", [{}])[0]
+    self.assertEqual(method_resp.get("selected_destination_id"), "dest_2")
+
+    destinations = method_resp.get("destinations", [])
+    selected_dest = next(
+      (d for d in destinations if d.get("id") == "dest_2"), None
+    )
+    self.assertIsNotNone(
+      selected_dest, "Selected destination not found in response destinations"
+    )
+    self.assertEqual(selected_dest.get("postal_code"), "90210")
+    self.assertEqual(selected_dest.get("street_address"), "456 Elm St")
 
   def test_cancel_checkout(self):
     """Test successful checkout cancellation.
@@ -155,7 +238,7 @@ class CheckoutLifecycleTest(integration_test_utils.IntegrationTestBase):
     Then the response should be 200 OK, the status should be 'completed', and an
     order ID should be generated.
     """
-    response_json = self.create_checkout_session()
+    response_json = self.create_checkout_session(buyer=self.DEFAULT_BUYER)
     checkout_obj = checkout.Checkout(**response_json)
     checkout_id = checkout_obj.id
 
@@ -301,7 +384,7 @@ class CheckoutLifecycleTest(integration_test_utils.IntegrationTestBase):
     When a complete request is sent,
     Then the server should reject it with a non-200 status.
     """
-    response_json = self.create_checkout_session()
+    response_json = self.create_checkout_session(buyer=self.DEFAULT_BUYER)
     checkout_id = checkout.Checkout(**response_json).id
 
     self._cancel_checkout(checkout_id)
@@ -336,7 +419,7 @@ class CheckoutLifecycleTest(integration_test_utils.IntegrationTestBase):
     # check BEFORE the status check. If we use a different key (which
     # default get_headers does), it should fail.
     """
-    response_json = self.create_checkout_session()
+    response_json = self.create_checkout_session(buyer=self.DEFAULT_BUYER)
     checkout_id = checkout.Checkout(**response_json).id
 
     self._complete_checkout(checkout_id)
@@ -360,7 +443,7 @@ class CheckoutLifecycleTest(integration_test_utils.IntegrationTestBase):
     When an update request is sent,
     Then the server should reject it with a non-200 status.
     """
-    response_json = self.create_checkout_session()
+    response_json = self.create_checkout_session(buyer=self.DEFAULT_BUYER)
     checkout_obj = checkout.Checkout(**response_json)
     checkout_id = checkout_obj.id
 
@@ -409,7 +492,7 @@ class CheckoutLifecycleTest(integration_test_utils.IntegrationTestBase):
     When a cancel request is sent,
     Then the server should reject it with a non-200 status.
     """
-    response_json = self.create_checkout_session()
+    response_json = self.create_checkout_session(buyer=self.DEFAULT_BUYER)
     checkout_id = checkout.Checkout(**response_json).id
 
     self._complete_checkout(checkout_id)
