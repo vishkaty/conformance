@@ -233,8 +233,9 @@ class DiscountTest(integration_test_utils.IntegrationTestBase):
     if not second:
       self.skipTest("no valid_discount_code_2 configured for the replace test")
     base, _ = self._new_checkout()
-    self._apply_codes(base, [self._code])
-    replaced = self._apply_codes(base, [second])
+    applied_raw = self._apply_codes(base, [self._code])
+    applied_obj = checkout.Checkout(**applied_raw)
+    replaced = self._apply_codes(applied_obj, [second])
     applied = [c.upper() for c in self._applied_codes(replaced)]
     self.assertIn(
       second.upper(), applied, "the replacement code must be applied"
