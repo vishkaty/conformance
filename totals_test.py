@@ -47,8 +47,8 @@ _ADDITIVE_TYPES = frozenset({"subtotal", "fulfillment", "tax", "fee"})
 # Entry types whose amount MUST be negative (total.json: exclusiveMaximum 0).
 _NEGATIVE_TYPES = frozenset({"discount", "items_discount"})
 
-# A percentage discount code recognised by the reference data set. If the
-# server under test does not recognise it, the discount-sign test skips.
+# A percentage discount code recognized by the reference data set. If the
+# server under test does not recognize it, the discount-sign test skips.
 _DISCOUNT_CODE = "10OFF"
 
 
