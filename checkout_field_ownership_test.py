@@ -20,15 +20,15 @@ that excludes a field from every request variant (create and update) while
 keeping it on the response. These four members exist only so the business
 can communicate state back to the caller; a caller has no schema-legal way
 to set them, and a compliant create handler that builds the response by
-merging or spreading the raw request body must still not let a caller's
-value for one of these members reach either the response or the stored
-checkout.
+merging or spreading the raw request body must still not let a value the
+caller supplied for one of these members reach either the response or the
+stored checkout.
 
 This module sends a caller payload that stuffs values into all four members
-anyway (bypassing the SDK's request model, which has no fields for them, by
+anyway (bypassing the SDK request model, which has no fields for them, by
 posting a raw JSON body -- exactly what an uncooperative or buggy client can
-do) and asserts the business's own values come back instead, both in the
-create response and when the session is read back afterwards.
+do) and asserts the values the business itself set come back instead, both
+in the create response and when the session is read back afterward.
 """
 
 from absl.testing import absltest
@@ -67,7 +67,7 @@ class CheckoutFieldOwnershipTest(integration_test_utils.IntegrationTestBase):
     """POST a checkout create request carrying all four omit-only members.
 
     Builds the payload the same way ``create_checkout_payload`` does, then
-    layers the caller-supplied members onto the raw JSON dict (the SDK's
+    layers the caller-supplied members onto the raw JSON dict (the SDK
     ``CheckoutCreateRequest`` has no fields for them, so this bypasses the
     model rather than fighting it -- matching what a non-SDK client would
     send on the wire).
@@ -153,8 +153,8 @@ class CheckoutFieldOwnershipTest(integration_test_utils.IntegrationTestBase):
     messages, and order entirely (the ordinary, spec-conformant case),
     When a POST request is sent to /checkout-sessions,
     Then the response should have a 200/201 status and include a checkout
-    ID -- this test guards against a fix that starts rejecting the field's
-    *absence* while chasing its presence.
+    ID -- this test guards against a fix that starts rejecting the absence
+    of these fields while chasing their presence.
     """
     data = self.create_checkout_session(select_fulfillment=False)
     self.assertTrue(data.get("id"), "Created checkout missing ID")
